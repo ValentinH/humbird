@@ -125,7 +125,7 @@
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
     let bird, walls, score, hits, running, wallFreeze, targetNoteIdx;
-    let lastTime, timeSinceWall, lastPassedNoteIdx;
+    let lastTime, timeSinceWall, lastPassedNoteIdx, lastPassedWall;
 
     function resize() {
       // mobile-first: use full viewport
@@ -157,6 +157,7 @@
       lastTime = performance.now();
       timeSinceWall = 0;
       lastPassedNoteIdx = targetNoteIdx; // start position
+      lastPassedWall = null;
       scoreEl.style.display = 'block';
       hitsEl.style.display = 'block';
       scoreEl.textContent = '0';
@@ -279,24 +280,30 @@
             w.hitCooldown = HIT_COOLDOWN_TIME;
             updateHitsDisplay();
 
-            // Find the previous wall (the one just left of this one)
-            const sortedByX = [...walls].sort((a, b) => a.x - b.x);
-            const thisIdx = sortedByX.indexOf(w);
-            const prevWall = thisIdx > 0 ? sortedByX[thisIdx - 1] : null;
+            // Move bird back to the last hole it successfully passed
+            targetNoteIdx = lastPassedNoteIdx;
 
-            if (prevWall) {
-              // Rewind so bird is right after the previous wall, with the wall clearly visible on screen
-              // Place the previous wall at ~15% from left so it's clearly visible
-              const prevWallTargetX = W * 0.12;
-              const shift = prevWallTargetX - prevWall.x;
+            if (lastPassedWall) {
+              // Re-create the last passed wall at a visible position on screen
+              const ghostWall = {
+                x: W * 0.12,
+                gapTop: lastPassedWall.gapTop,
+                gapBottom: lastPassedWall.gapBottom,
+                note: lastPassedWall.note,
+                noteIdx: lastPassedWall.noteIdx,
+                passed: true,
+                hitCooldown: HIT_COOLDOWN_TIME
+              };
+              // Shift all walls so the hit wall is well ahead of the bird
+              const shift = (birdX + birdSize * 2 + MIN_WALL_GAP) - w.x;
               for (const ww of walls) ww.x += shift;
+              // Insert the ghost wall
+              walls.push(ghostWall);
             } else {
               // No previous wall — push back well before current wall
               const pushDist = bRight - w.x + MIN_WALL_GAP;
               for (const ww of walls) ww.x += pushDist;
             }
-            // Move bird back to the last hole it successfully passed
-            targetNoteIdx = lastPassedNoteIdx;
 
             // Enforce minimum spacing between walls after rewind
             const sorted = walls.sort((a, b) => a.x - b.x);
@@ -330,6 +337,7 @@
           score++;
           scoreEl.textContent = score;
           lastPassedNoteIdx = w.noteIdx;
+          lastPassedWall = { noteIdx: w.noteIdx, note: w.note, gapTop: w.gapTop, gapBottom: w.gapBottom };
         }
       }
 
