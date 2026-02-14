@@ -185,15 +185,8 @@
     }
 
     // ── Input ──
-    function handleInput(e) {
-      e.preventDefault();
-      flap();
-    }
-    document.addEventListener('touchstart', handleInput, { passive: false });
-    document.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.btn')) return;
-      flap();
-    });
+    cvs.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); }, { passive: false });
+    cvs.addEventListener('mousedown', () => flap());
     document.addEventListener('keydown', (e) => {
       if (e.code === 'Space') { e.preventDefault(); flap(); }
     });
