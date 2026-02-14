@@ -285,8 +285,10 @@
             const prevWall = thisIdx > 0 ? sortedByX[thisIdx - 1] : null;
 
             if (prevWall) {
-              // Rewind so bird sits just after the previous wall
-              const shift = birdX - (prevWall.x + wallWidth + birdSize * 2);
+              // Rewind so bird is right after the previous wall, with the wall clearly visible on screen
+              // Place the previous wall at ~15% from left so it's clearly visible
+              const prevWallTargetX = W * 0.12;
+              const shift = prevWallTargetX - prevWall.x;
               for (const ww of walls) ww.x += shift;
             } else {
               // No previous wall — push back well before current wall
