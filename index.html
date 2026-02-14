@@ -103,7 +103,7 @@
     };
     const MAX_HITS = 10;
     const WALL_SPEED = 2.5;       // px per frame
-    const WALL_INTERVAL = 220;    // frames between walls
+    const WALL_INTERVAL = 120;    // frames between walls
     const GAP_HEIGHT_RATIO = 0.16; // gap = 16% of canvas height
     const BIRD_X_RATIO = 0.2;     // bird at 20% from left
     const GRAVITY = 0.35;
@@ -156,6 +156,8 @@
       hitsEl.style.display = 'block';
       scoreEl.textContent = '0';
       updateHitsDisplay();
+      // Spawn first wall quickly
+      spawnWall();
     }
 
     function updateHitsDisplay() {
@@ -373,7 +375,12 @@
       startGame();
     });
 
-    // Initial draw
+    // Init bird for title screen draw
+    bird = { y: H / 2, vy: 0 };
+    walls = [];
+    running = false;
+
+    // Initial draw (just background)
     draw();
     gameLoop();
   </script>
