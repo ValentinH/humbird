@@ -14,12 +14,39 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      padding: 1rem;
+      min-height: 100dvh;
+      overflow: hidden;
+      touch-action: none;
     }
-    h1 { font-size: 2rem; margin-bottom: 0.5rem; }
-    .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
-    #start-btn {
+    canvas {
+      display: block;
+      max-width: 100vw;
+      max-height: 100dvh;
+    }
+    #ui-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    #ui-overlay.active { pointer-events: auto; }
+    #start-screen, #game-over-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      text-align: center;
+      padding: 2rem;
+    }
+    #start-screen.visible, #game-over-screen.visible {
+      display: flex;
+    }
+    h1 { font-size: 2.5rem; }
+    .subtitle { color: #888; font-size: 0.9rem; }
+    .btn {
       background: #e94560;
       color: white;
       border: none;
@@ -29,211 +56,429 @@
       cursor: pointer;
       transition: transform 0.1s;
     }
-    #start-btn:active { transform: scale(0.95); }
-    #start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #note-display {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: 1.5rem;
-      margin-top: 2rem;
-    }
-    .current-note {
-      font-size: 8rem;
-      font-weight: bold;
-      line-height: 1;
-      transition: color 0.1s;
-    }
-    .note-info {
-      display: flex;
-      gap: 2rem;
-      font-size: 1rem;
-      color: #aaa;
-    }
-    .note-bar {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 1rem;
-    }
-    .note-bar span {
-      padding: 0.5rem 0.75rem;
-      border-radius: 8px;
-      background: #16213e;
-      font-weight: bold;
-      font-size: 1.1rem;
-      transition: background 0.15s, transform 0.15s;
-    }
-    .note-bar span.active {
-      background: #e94560;
-      transform: scale(1.2);
-    }
-    .cents {
-      width: 200px;
-      height: 6px;
-      background: #16213e;
-      border-radius: 3px;
-      position: relative;
-      overflow: hidden;
-    }
-    .cents-indicator {
+    .btn:active { transform: scale(0.95); }
+    .hint { color: #666; font-size: 0.8rem; margin-top: 0.5rem; }
+    #score-display {
       position: absolute;
-      width: 8px;
-      height: 100%;
-      background: #0f3460;
-      border-radius: 3px;
-      left: 50%;
-      transform: translateX(-50%);
-      transition: left 0.08s, background 0.15s;
+      top: 1rem;
+      right: 1rem;
+      font-size: 1.5rem;
+      font-weight: bold;
+      display: none;
     }
-    .cents-indicator.in-tune { background: #4ecca3; }
-    #error { color: #e94560; margin-top: 1rem; }
+    #hits-display {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      font-size: 1rem;
+      color: #e94560;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <h1>🐦🎵 HumBird</h1>
-  <p class="subtitle">Sing to fly — voice-controlled game</p>
-  <button id="start-btn">🎤 Connect Microphone</button>
-  <div id="error"></div>
-  <div id="note-display">
-    <div class="current-note" id="current-note">—</div>
-    <div class="cents" id="cents-bar">
-      <div class="cents-indicator" id="cents-indicator"></div>
+  <canvas id="game"></canvas>
+  <div id="score-display">0</div>
+  <div id="hits-display"></div>
+  <div id="ui-overlay" class="active">
+    <div id="start-screen" class="visible">
+      <h1>🐦🎵 HumBird</h1>
+      <p class="subtitle">Sing the right note to fly through the gaps</p>
+      <button class="btn" id="start-btn">▶ Play</button>
+      <p class="hint">Keys A-G / arrows / tap top-bottom to move (voice coming soon)</p>
     </div>
-    <div class="note-info">
-      <span>Freq: <strong id="freq">—</strong> Hz</span>
-      <span>Cents: <strong id="cents">—</strong></span>
-    </div>
-    <div class="note-bar" id="note-bar">
-      <span>C</span><span>D</span><span>E</span><span>F</span><span>G</span><span>A</span><span>B</span>
+    <div id="game-over-screen">
+      <h1>💀 Game Over</h1>
+      <p>Score: <strong id="final-score">0</strong></p>
+      <button class="btn" id="restart-btn">🔄 Play Again</button>
     </div>
   </div>
 
   <script>
-    const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const GAME_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    // ── Constants ──
+    const NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    const NOTE_COLORS = {
+      C: '#e94560', D: '#f5a623', E: '#f7dc6f', F: '#4ecca3',
+      G: '#3498db', A: '#9b59b6', B: '#e056a0'
+    };
+    const MAX_HITS = 10;
+    const WALL_SPEED = 72;        // px per second (chill pace)
+    const WALL_INTERVAL = 3.3;    // seconds between walls
+    const GAP_HEIGHT_RATIO = 0.18; // gap = 18% of canvas height
+    const BIRD_X_RATIO = 0.2;     // bird at 20% from left
+    const BIRD_LERP = 2;          // lerp speed per second (lower = more visible animation)
+    const BIRD_SIZE_RATIO = 0.045;
+    const WALL_WIDTH_RATIO = 0.12;
+    const PUSHBACK_TIME = 1.2;    // seconds to pause walls after hit (time to see the rewind)
+    const HIT_COOLDOWN_TIME = 1;  // seconds of invulnerability after hit
+    const MIN_WALL_GAP = 250;    // minimum px between walls
 
-    const startBtn = document.getElementById('start-btn');
-    const noteDisplay = document.getElementById('note-display');
-    const currentNoteEl = document.getElementById('current-note');
-    const freqEl = document.getElementById('freq');
-    const centsEl = document.getElementById('cents');
-    const centsIndicator = document.getElementById('cents-indicator');
-    const noteBarSpans = document.querySelectorAll('#note-bar span');
-    const errorEl = document.getElementById('error');
+    // ── DOM ──
+    const cvs = document.getElementById('game');
+    const ctx = cvs.getContext('2d');
+    const scoreEl = document.getElementById('score-display');
+    const hitsEl = document.getElementById('hits-display');
+    const overlay = document.getElementById('ui-overlay');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const finalScoreEl = document.getElementById('final-score');
 
-    // Autocorrelation-based pitch detection
-    function autoCorrelate(buf, sampleRate) {
-      let size = buf.length;
-      let rms = 0;
-      for (let i = 0; i < size; i++) rms += buf[i] * buf[i];
-      rms = Math.sqrt(rms / size);
-      if (rms < 0.01) return -1; // too quiet
+    // ── State ──
+    let W, H, birdX, birdSize, wallWidth;
+    let bird, walls, score, hits, running, wallFreeze, targetNoteIdx;
+    let lastTime, timeSinceWall, lastPassedNoteIdx, lastPassedWall;
 
-      // trim silence
-      let r1 = 0, r2 = size - 1;
-      const threshold = 0.2;
-      for (let i = 0; i < size / 2; i++) { if (Math.abs(buf[i]) < threshold) { r1 = i; break; } }
-      for (let i = 1; i < size / 2; i++) { if (Math.abs(buf[size - i]) < threshold) { r2 = size - i; break; } }
+    function resize() {
+      // mobile-first: use full viewport
+      W = cvs.width = window.innerWidth;
+      H = cvs.height = window.innerHeight;
+      birdSize = Math.round(H * BIRD_SIZE_RATIO);
+      wallWidth = Math.round(W * WALL_WIDTH_RATIO);
+      birdX = Math.round(W * BIRD_X_RATIO);
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
-      buf = buf.slice(r1, r2);
-      size = buf.length;
-
-      const c = new Float32Array(size);
-      for (let i = 0; i < size; i++) {
-        for (let j = 0; j < size - i; j++) {
-          c[i] += buf[j] * buf[j + i];
-        }
-      }
-
-      let d = 0;
-      while (c[d] > c[d + 1]) d++;
-
-      let maxval = -1, maxpos = -1;
-      for (let i = d; i < size; i++) {
-        if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
-      }
-
-      let T0 = maxpos;
-      // parabolic interpolation
-      const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
-      const a = (x1 + x3 - 2 * x2) / 2;
-      const b = (x3 - x1) / 2;
-      if (a) T0 = T0 - b / (2 * a);
-
-      return sampleRate / T0;
+    function noteToY(noteIndex) {
+      // note 0 (C) = bottom, note 6 (B) = top
+      // leave padding top/bottom
+      const pad = H * 0.1;
+      const range = H - pad * 2;
+      return pad + range * (1 - noteIndex / (NOTES.length - 1));
     }
 
-    function noteFromFreq(freq) {
-      const noteNum = 12 * (Math.log2(freq / 440));
-      return Math.round(noteNum) + 69;
+    function initGame() {
+      targetNoteIdx = 3; // Start at F (middle)
+      bird = { y: noteToY(targetNoteIdx) };
+      walls = [];
+      score = 0;
+      hits = 0;
+      running = true;
+      wallFreeze = 0;
+      lastTime = performance.now();
+      timeSinceWall = 0;
+      lastPassedNoteIdx = targetNoteIdx; // start position
+      lastPassedWall = null;
+      scoreEl.style.display = 'block';
+      hitsEl.style.display = 'block';
+      scoreEl.textContent = '0';
+      updateHitsDisplay();
+      // Spawn first wall quickly
+      spawnWall();
     }
 
-    function centsOffFromFreq(freq, noteNum) {
-      return Math.floor(1200 * Math.log2(freq / (440 * Math.pow(2, (noteNum - 69) / 12))));
+    function updateHitsDisplay() {
+      const hearts = MAX_HITS - hits;
+      hitsEl.textContent = '❤️'.repeat(Math.max(0, hearts));
     }
 
-    startBtn.addEventListener('click', async () => {
-      try {
-        startBtn.disabled = true;
-        startBtn.textContent = '🎤 Connecting...';
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const audioCtx = new AudioContext();
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
+    function spawnWall() {
+      // Ensure minimum distance from last wall
+      const lastWall = walls.length > 0 ? walls[walls.length - 1] : null;
+      const spawnX = lastWall ? Math.max(W + wallWidth, lastWall.x + wallWidth + MIN_WALL_GAP) : W + wallWidth;
 
-        const buf = new Float32Array(analyser.fftSize);
+      const noteIdx = Math.floor(Math.random() * NOTES.length);
+      const note = NOTES[noteIdx];
+      const gapCenter = noteToY(noteIdx);
+      const gapH = H * GAP_HEIGHT_RATIO;
+      walls.push({
+        x: spawnX,
+        gapTop: gapCenter - gapH / 2,
+        gapBottom: gapCenter + gapH / 2,
+        note,
+        noteIdx,
+        passed: false,
+        hitCooldown: 0
+      });
+    }
 
-        startBtn.style.display = 'none';
-        noteDisplay.style.display = 'flex';
+    function setTargetNote(idx) {
+      if (!running) return;
+      targetNoteIdx = Math.max(0, Math.min(NOTES.length - 1, idx));
+    }
 
-        function update() {
-          analyser.getFloatTimeDomainData(buf);
-          const freq = autoCorrelate(buf, audioCtx.sampleRate);
-
-          if (freq === -1) {
-            currentNoteEl.textContent = '—';
-            currentNoteEl.style.color = '#555';
-            freqEl.textContent = '—';
-            centsEl.textContent = '—';
-            centsIndicator.style.left = '50%';
-            centsIndicator.classList.remove('in-tune');
-            noteBarSpans.forEach(s => s.classList.remove('active'));
-          } else {
-            const midi = noteFromFreq(freq);
-            const noteName = NOTE_NAMES[midi % 12];
-            const cents = centsOffFromFreq(freq, midi);
-            const inTune = Math.abs(cents) < 10;
-
-            currentNoteEl.textContent = noteName;
-            currentNoteEl.style.color = inTune ? '#4ecca3' : '#e94560';
-            freqEl.textContent = freq.toFixed(1);
-            centsEl.textContent = (cents > 0 ? '+' : '') + cents;
-
-            const pct = 50 + (cents / 50) * 50;
-            centsIndicator.style.left = Math.max(0, Math.min(100, pct)) + '%';
-            centsIndicator.classList.toggle('in-tune', inTune);
-
-            // Highlight in note bar (map sharps to nearest natural)
-            const natural = noteName.replace('#', '');
-            noteBarSpans.forEach(s => {
-              s.classList.toggle('active', s.textContent === natural);
-            });
-          }
-
-          requestAnimationFrame(update);
-        }
-        update();
-
-      } catch (err) {
-        startBtn.disabled = false;
-        startBtn.textContent = '🎤 Connect Microphone';
-        errorEl.textContent = err.name === 'NotAllowedError'
-          ? 'Microphone access denied. Please allow it and try again.'
-          : 'Error: ' + err.message;
+    // ── Input ──
+    // Keyboard: press note keys A-G or arrow up/down
+    document.addEventListener('keydown', (e) => {
+      if (!running) return;
+      const key = e.key.toUpperCase();
+      const noteIdx = NOTES.indexOf(key);
+      if (noteIdx !== -1) {
+        e.preventDefault();
+        setTargetNote(noteIdx);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setTargetNote(targetNoteIdx + 1);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setTargetNote(targetNoteIdx - 1);
       }
     });
+
+    // Touch/click: tap top half = go up, bottom half = go down
+    cvs.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (!running) return;
+      const touch = e.touches[0];
+      if (touch.clientY < H / 2) {
+        setTargetNote(targetNoteIdx + 1);
+      } else {
+        setTargetNote(targetNoteIdx - 1);
+      }
+    }, { passive: false });
+    cvs.addEventListener('mousedown', (e) => {
+      if (!running) return;
+      if (e.clientY < H / 2) {
+        setTargetNote(targetNoteIdx + 1);
+      } else {
+        setTargetNote(targetNoteIdx - 1);
+      }
+    });
+
+    // ── Game Loop ──
+    function update(dt) {
+      if (!running) return;
+
+      // Bird smoothly moves toward target note
+      const targetY = noteToY(targetNoteIdx);
+      const lerpFactor = 1 - Math.exp(-BIRD_LERP * dt);
+      bird.y += (targetY - bird.y) * lerpFactor;
+
+      // Wall freeze countdown
+      if (wallFreeze > 0) {
+        wallFreeze -= dt;
+      } else {
+        // Spawn walls (only when not frozen)
+        timeSinceWall += dt;
+        if (timeSinceWall >= WALL_INTERVAL) {
+          timeSinceWall = 0;
+          spawnWall();
+        }
+        // Move walls
+        const moveAmt = WALL_SPEED * dt;
+        for (const w of walls) w.x -= moveAmt;
+      }
+
+      // Reduce hit cooldowns
+      for (const w of walls) {
+        if (w.hitCooldown > 0) w.hitCooldown -= dt;
+      }
+
+      // Collision & scoring
+      const bRight = birdX + birdSize / 2;
+      const bLeft = birdX - birdSize / 2;
+      const bTop = bird.y - birdSize / 2;
+      const bBot = bird.y + birdSize / 2;
+
+      for (const w of walls) {
+        if (bRight > w.x && bLeft < w.x + wallWidth) {
+          const inGap = bTop > w.gapTop && bBot < w.gapBottom;
+          if (!inGap && w.hitCooldown <= 0) {
+            hits++;
+            w.hitCooldown = HIT_COOLDOWN_TIME;
+            updateHitsDisplay();
+
+            // Move bird back to the last hole it successfully passed
+            targetNoteIdx = lastPassedNoteIdx;
+
+            if (lastPassedWall) {
+              // Re-create the last passed wall at a visible position on screen
+              const ghostWall = {
+                x: birdX - wallWidth - birdSize,
+                gapTop: lastPassedWall.gapTop,
+                gapBottom: lastPassedWall.gapBottom,
+                note: lastPassedWall.note,
+                noteIdx: lastPassedWall.noteIdx,
+                passed: true,
+                hitCooldown: HIT_COOLDOWN_TIME
+              };
+              // Shift all walls so the hit wall is well ahead of the bird
+              const shift = (birdX + birdSize * 2 + MIN_WALL_GAP) - w.x;
+              for (const ww of walls) ww.x += shift;
+              // Insert the ghost wall
+              walls.push(ghostWall);
+            } else {
+              // No previous wall — push back well before current wall
+              const pushDist = bRight - w.x + MIN_WALL_GAP;
+              for (const ww of walls) ww.x += pushDist;
+            }
+
+            // Enforce minimum spacing between walls after rewind
+            walls.sort((a, b) => a.x - b.x);
+            for (let i = 1; i < walls.length; i++) {
+              const gap = walls[i].x - (walls[i - 1].x + wallWidth);
+              if (gap < MIN_WALL_GAP) {
+                walls[i].x = walls[i - 1].x + wallWidth + MIN_WALL_GAP;
+              }
+            }
+
+            // Unmark walls that are now ahead of bird
+            for (const ww of walls) {
+              if (ww.x >= birdX) ww.passed = false;
+            }
+
+            // Freeze walls to give player time to adjust
+            wallFreeze = PUSHBACK_TIME;
+
+            if (hits >= MAX_HITS) {
+              running = false;
+              gameOver();
+              return;
+            }
+            break; // only one collision per frame
+          }
+        }
+
+        // Score
+        if (!w.passed && w.x + wallWidth < birdX) {
+          w.passed = true;
+          score++;
+          scoreEl.textContent = score;
+          lastPassedNoteIdx = w.noteIdx;
+          lastPassedWall = { noteIdx: w.noteIdx, note: w.note, gapTop: w.gapTop, gapBottom: w.gapBottom };
+        }
+      }
+
+      // Remove off-screen walls
+      walls = walls.filter(w => w.x + wallWidth > -10);
+    }
+
+    function draw() {
+      // Background
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, W, H);
+
+      // Note lanes (subtle horizontal guides)
+      ctx.globalAlpha = 0.08;
+      for (let i = 0; i < NOTES.length; i++) {
+        const y = noteToY(i);
+        ctx.fillStyle = NOTE_COLORS[NOTES[i]];
+        ctx.fillRect(0, y - 1, W, 2);
+      }
+      ctx.globalAlpha = 1;
+
+      // Note labels on left edge
+      ctx.font = `${Math.round(birdSize * 0.7)}px monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (let i = 0; i < NOTES.length; i++) {
+        const y = noteToY(i);
+        ctx.fillStyle = NOTE_COLORS[NOTES[i]];
+        ctx.globalAlpha = 0.3;
+        ctx.fillText(NOTES[i], 6, y);
+      }
+      ctx.globalAlpha = 1;
+
+      // Walls
+      for (const w of walls) {
+        const color = NOTE_COLORS[w.note];
+
+        // Top wall
+        ctx.fillStyle = '#16213e';
+        ctx.fillRect(w.x, 0, wallWidth, w.gapTop);
+
+        // Bottom wall
+        ctx.fillRect(w.x, w.gapBottom, wallWidth, H - w.gapBottom);
+
+        // Gap edges glow
+        ctx.fillStyle = color;
+        ctx.fillRect(w.x, w.gapTop - 3, wallWidth, 3);
+        ctx.fillRect(w.x, w.gapBottom, wallWidth, 3);
+
+        // Note label on wall
+        ctx.fillStyle = color;
+        ctx.font = `bold ${Math.round(wallWidth * 0.35)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(w.note, w.x + wallWidth / 2, (w.gapTop + w.gapBottom) / 2);
+      }
+
+      // Bird
+      const bx = birdX;
+      const by = bird.y;
+      const r = birdSize / 2;
+
+      // Body
+      ctx.fillStyle = '#f5a623';
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(bx + r * 0.3, by - r * 0.2, r * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a2e';
+      ctx.beginPath();
+      ctx.arc(bx + r * 0.35, by - r * 0.2, r * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Beak
+      ctx.fillStyle = '#e94560';
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.lineTo(bx + r * 1.5, by + r * 0.15);
+      ctx.lineTo(bx + r, by + r * 0.3);
+      ctx.fill();
+
+      // Wing
+      const wingFlap = Math.sin(performance.now() * 0.005) * r * 0.3;
+      ctx.fillStyle = '#d4941e';
+      ctx.beginPath();
+      ctx.ellipse(bx - r * 0.3, by + wingFlap, r * 0.5, r * 0.25, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Hit flash
+      if (walls.some(w => w.hitCooldown > HIT_COOLDOWN_TIME * 0.7)) {
+        ctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
+
+    function gameOver() {
+      scoreEl.style.display = 'none';
+      hitsEl.style.display = 'none';
+      finalScoreEl.textContent = score;
+      overlay.classList.add('active');
+      gameOverScreen.classList.add('visible');
+    }
+
+    function gameLoop(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.1); // cap at 100ms to avoid spiral
+      lastTime = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // ── Start / Restart ──
+    function startGame() {
+      overlay.classList.remove('active');
+      startScreen.classList.remove('visible');
+      gameOverScreen.classList.remove('visible');
+      initGame();
+    }
+
+    document.getElementById('start-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      startGame();
+    });
+    document.getElementById('restart-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      startGame();
+    });
+
+    // Init bird for title screen draw
+    targetNoteIdx = 3;
+    bird = { y: H / 2 };
+    walls = [];
+    running = false;
+    lastTime = performance.now();
+
+    // Initial draw (just background)
+    draw();
+    requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>
