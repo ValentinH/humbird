@@ -110,7 +110,7 @@
     const FLAP_FORCE = -6.5;
     const BIRD_SIZE_RATIO = 0.045;
     const WALL_WIDTH_RATIO = 0.12;
-    const PUSHBACK = 30;          // px pushed back on hit
+    const PUSHBACK_FRAMES = 40;   // frames to pause walls after hit
 
     // ── DOM ──
     const cvs = document.getElementById('game');
@@ -124,7 +124,7 @@
 
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
-    let bird, walls, score, hits, frameCount, running;
+    let bird, walls, score, hits, frameCount, running, wallFreeze;
 
     function resize() {
       // mobile-first: use full viewport
@@ -152,6 +152,7 @@
       hits = 0;
       frameCount = 0;
       running = true;
+      wallFreeze = 0;
       scoreEl.style.display = 'block';
       hitsEl.style.display = 'block';
       scoreEl.textContent = '0';
@@ -209,33 +210,43 @@
       // Spawn walls
       if (frameCount % WALL_INTERVAL === 0) spawnWall();
 
-      // Move walls
-      for (const w of walls) {
-        w.x -= WALL_SPEED;
-        if (w.hitCooldown > 0) w.hitCooldown--;
+      // Wall freeze countdown
+      if (wallFreeze > 0) {
+        wallFreeze--;
+      } else {
+        // Move walls
+        for (const w of walls) w.x -= WALL_SPEED;
+      }
 
-        // Collision check
-        const bRight = birdX + birdSize / 2;
-        const bLeft = birdX - birdSize / 2;
-        const bTop = bird.y - birdSize / 2;
-        const bBot = bird.y + birdSize / 2;
+      // Collision & scoring
+      const bRight = birdX + birdSize / 2;
+      const bLeft = birdX - birdSize / 2;
+      const bTop = bird.y - birdSize / 2;
+      const bBot = bird.y + birdSize / 2;
+
+      for (const w of walls) {
+        if (w.hitCooldown > 0) w.hitCooldown--;
 
         if (bRight > w.x && bLeft < w.x + wallWidth) {
           const inGap = bTop > w.gapTop && bBot < w.gapBottom;
           if (!inGap && w.hitCooldown === 0) {
             hits++;
-            w.hitCooldown = 30; // frames of invulnerability
+            w.hitCooldown = 60;
             updateHitsDisplay();
 
-            // Push bird back slightly (move wall forward relative to bird)
-            // Actually shift all walls forward a bit
-            for (const ww of walls) ww.x += PUSHBACK;
+            // Snap all walls forward so bird is clearly before this wall
+            const overlap = bRight - w.x + birdSize;
+            for (const ww of walls) ww.x += overlap;
+
+            // Freeze walls to give player time to adjust
+            wallFreeze = PUSHBACK_FRAMES;
 
             if (hits >= MAX_HITS) {
               running = false;
               gameOver();
               return;
             }
+            break; // only one collision per frame
           }
         }
 
