@@ -102,14 +102,15 @@
       G: '#3498db', A: '#9b59b6', B: '#e056a0'
     };
     const MAX_HITS = 10;
-    const WALL_SPEED = 1.2;       // px per frame (chill pace)
-    const WALL_INTERVAL = 200;    // frames between walls
+    const WALL_SPEED = 72;        // px per second (chill pace)
+    const WALL_INTERVAL = 3.3;    // seconds between walls
     const GAP_HEIGHT_RATIO = 0.18; // gap = 18% of canvas height
     const BIRD_X_RATIO = 0.2;     // bird at 20% from left
-    const BIRD_LERP = 0.08;       // smooth movement toward target note
+    const BIRD_LERP = 5;          // lerp speed per second
     const BIRD_SIZE_RATIO = 0.045;
     const WALL_WIDTH_RATIO = 0.12;
-    const PUSHBACK_FRAMES = 45;   // frames to pause walls after hit
+    const PUSHBACK_TIME = 0.75;   // seconds to pause walls after hit
+    const HIT_COOLDOWN_TIME = 1;  // seconds of invulnerability after hit
 
     // ── DOM ──
     const cvs = document.getElementById('game');
@@ -123,7 +124,8 @@
 
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
-    let bird, walls, score, hits, frameCount, running, wallFreeze, targetNoteIdx;
+    let bird, walls, score, hits, running, wallFreeze, targetNoteIdx;
+    let lastTime, timeSinceWall;
 
     function resize() {
       // mobile-first: use full viewport
@@ -150,9 +152,10 @@
       walls = [];
       score = 0;
       hits = 0;
-      frameCount = 0;
       running = true;
       wallFreeze = 0;
+      lastTime = performance.now();
+      timeSinceWall = 0;
       scoreEl.style.display = 'block';
       hitsEl.style.display = 'block';
       scoreEl.textContent = '0';
@@ -232,23 +235,33 @@
     });
 
     // ── Game Loop ──
-    function update() {
+    function update(dt) {
       if (!running) return;
-      frameCount++;
 
       // Bird smoothly moves toward target note
       const targetY = noteToY(targetNoteIdx);
-      bird.y += (targetY - bird.y) * BIRD_LERP;
+      const lerpFactor = 1 - Math.exp(-BIRD_LERP * dt);
+      bird.y += (targetY - bird.y) * lerpFactor;
 
       // Spawn walls
-      if (frameCount % WALL_INTERVAL === 0) spawnWall();
+      timeSinceWall += dt;
+      if (timeSinceWall >= WALL_INTERVAL) {
+        timeSinceWall = 0;
+        spawnWall();
+      }
 
       // Wall freeze countdown
       if (wallFreeze > 0) {
-        wallFreeze--;
+        wallFreeze -= dt;
       } else {
         // Move walls
-        for (const w of walls) w.x -= WALL_SPEED;
+        const moveAmt = WALL_SPEED * dt;
+        for (const w of walls) w.x -= moveAmt;
+      }
+
+      // Reduce hit cooldowns
+      for (const w of walls) {
+        if (w.hitCooldown > 0) w.hitCooldown -= dt;
       }
 
       // Collision & scoring
@@ -258,13 +271,11 @@
       const bBot = bird.y + birdSize / 2;
 
       for (const w of walls) {
-        if (w.hitCooldown > 0) w.hitCooldown--;
-
         if (bRight > w.x && bLeft < w.x + wallWidth) {
           const inGap = bTop > w.gapTop && bBot < w.gapBottom;
-          if (!inGap && w.hitCooldown === 0) {
+          if (!inGap && w.hitCooldown <= 0) {
             hits++;
-            w.hitCooldown = 60;
+            w.hitCooldown = HIT_COOLDOWN_TIME;
             updateHitsDisplay();
 
             // Find the previous wall (the one just left of this one)
@@ -276,16 +287,14 @@
               // Rewind so bird sits just after the previous wall
               const shift = birdX - (prevWall.x + wallWidth + birdSize * 2);
               for (const ww of walls) ww.x += shift;
-              // Snap bird to the previous wall's note (safe position)
+              // Set target to previous wall's note — bird will lerp there
               targetNoteIdx = prevWall.noteIdx;
-              bird.y = noteToY(targetNoteIdx);
             } else {
               // No previous wall — push back well before current wall
-              // AND snap bird to this wall's note so it can pass
               const pushDist = bRight - w.x + MIN_WALL_GAP;
               for (const ww of walls) ww.x += pushDist;
+              // Set target to this wall's note so player sees where to go
               targetNoteIdx = w.noteIdx;
-              bird.y = noteToY(targetNoteIdx);
             }
 
             // Enforce minimum spacing between walls after rewind
@@ -303,7 +312,7 @@
             }
 
             // Freeze walls to give player time to adjust
-            wallFreeze = PUSHBACK_FRAMES;
+            wallFreeze = PUSHBACK_TIME;
 
             if (hits >= MAX_HITS) {
               running = false;
@@ -406,14 +415,14 @@
       ctx.fill();
 
       // Wing
-      const wingFlap = Math.sin(frameCount * 0.15) * r * 0.3;
+      const wingFlap = Math.sin(performance.now() * 0.005) * r * 0.3;
       ctx.fillStyle = '#d4941e';
       ctx.beginPath();
       ctx.ellipse(bx - r * 0.3, by + wingFlap, r * 0.5, r * 0.25, -0.3, 0, Math.PI * 2);
       ctx.fill();
 
       // Hit flash
-      if (walls.some(w => w.hitCooldown > 20)) {
+      if (walls.some(w => w.hitCooldown > HIT_COOLDOWN_TIME * 0.7)) {
         ctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
         ctx.fillRect(0, 0, W, H);
       }
@@ -427,8 +436,10 @@
       gameOverScreen.classList.add('visible');
     }
 
-    function gameLoop() {
-      update();
+    function gameLoop(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.1); // cap at 100ms to avoid spiral
+      lastTime = now;
+      update(dt);
       draw();
       requestAnimationFrame(gameLoop);
     }
@@ -455,10 +466,11 @@
     bird = { y: H / 2 };
     walls = [];
     running = false;
+    lastTime = performance.now();
 
     // Initial draw (just background)
     draw();
-    gameLoop();
+    requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>
