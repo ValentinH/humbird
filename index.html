@@ -166,13 +166,19 @@
       hitsEl.textContent = '❤️'.repeat(Math.max(0, hearts));
     }
 
+    const MIN_WALL_GAP = 250; // minimum px between walls
+
     function spawnWall() {
+      // Ensure minimum distance from last wall
+      const lastWall = walls.length > 0 ? walls[walls.length - 1] : null;
+      const spawnX = lastWall ? Math.max(W + wallWidth, lastWall.x + wallWidth + MIN_WALL_GAP) : W + wallWidth;
+
       const noteIdx = Math.floor(Math.random() * NOTES.length);
       const note = NOTES[noteIdx];
       const gapCenter = noteToY(noteIdx);
       const gapH = H * GAP_HEIGHT_RATIO;
       walls.push({
-        x: W + wallWidth,
+        x: spawnX,
         gapTop: gapCenter - gapH / 2,
         gapBottom: gapCenter + gapH / 2,
         note,
@@ -261,28 +267,39 @@
             w.hitCooldown = 60;
             updateHitsDisplay();
 
-            // Find the previous wall (the one just before this one)
+            // Find the previous wall (the one just left of this one)
             const sortedByX = [...walls].sort((a, b) => a.x - b.x);
             const thisIdx = sortedByX.indexOf(w);
             const prevWall = thisIdx > 0 ? sortedByX[thisIdx - 1] : null;
 
             if (prevWall) {
-              // Rewind so bird is centered in previous wall's gap
-              const targetX = prevWall.x + wallWidth / 2;
-              const shift = birdX - targetX;
+              // Rewind so bird sits just after the previous wall
+              const shift = birdX - (prevWall.x + wallWidth + birdSize * 2);
               for (const ww of walls) ww.x += shift;
-              // Snap bird to the previous wall's gap note
+              // Snap bird to the previous wall's note (safe position)
               targetNoteIdx = prevWall.noteIdx;
               bird.y = noteToY(targetNoteIdx);
             } else {
-              // No previous wall — just push back before this wall
-              const overlap = bRight - w.x + birdSize * 2;
-              for (const ww of walls) ww.x += overlap;
+              // No previous wall — push back well before current wall
+              // AND snap bird to this wall's note so it can pass
+              const pushDist = bRight - w.x + MIN_WALL_GAP;
+              for (const ww of walls) ww.x += pushDist;
+              targetNoteIdx = w.noteIdx;
+              bird.y = noteToY(targetNoteIdx);
             }
 
-            // Unmark passed walls that are now ahead of bird again
+            // Enforce minimum spacing between walls after rewind
+            const sorted = walls.sort((a, b) => a.x - b.x);
+            for (let i = 1; i < sorted.length; i++) {
+              const gap = sorted[i].x - (sorted[i - 1].x + wallWidth);
+              if (gap < MIN_WALL_GAP) {
+                sorted[i].x = sorted[i - 1].x + wallWidth + MIN_WALL_GAP;
+              }
+            }
+
+            // Unmark walls that are now ahead of bird
             for (const ww of walls) {
-              if (ww.x + wallWidth >= birdX) ww.passed = false;
+              if (ww.x >= birdX) ww.passed = false;
             }
 
             // Freeze walls to give player time to adjust
