@@ -74,18 +74,37 @@
       color: #e94560;
       display: none;
     }
+    #mic-status {
+      position: absolute;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.85rem;
+      color: #888;
+      display: none;
+      text-align: center;
+    }
+    #mic-status.listening { color: #4ecca3; }
+    #mic-status .detected-note {
+      font-size: 1.8rem;
+      font-weight: bold;
+      display: block;
+      margin-bottom: 0.2rem;
+    }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <div id="score-display">0</div>
   <div id="hits-display"></div>
+  <div id="mic-status"><span class="detected-note">—</span>🎤 Listening</div>
   <div id="ui-overlay" class="active">
     <div id="start-screen" class="visible">
       <h1>🐦🎵 HumBird</h1>
       <p class="subtitle">Sing the right note to fly through the gaps</p>
-      <button class="btn" id="start-btn">▶ Play</button>
-      <p class="hint">Keys A-G / arrows / tap top-bottom to move (voice coming soon)</p>
+      <button class="btn" id="start-btn">🎤 Play with Voice</button>
+      <button class="btn" id="start-silent-btn" style="background:#16213e;font-size:0.95rem;padding:0.7rem 1.5rem">▶ Play without mic</button>
+      <p class="hint">Voice: sing/hum C D E F G A B · also: keys A-G / arrows / tap</p>
     </div>
     <div id="game-over-screen">
       <h1>💀 Game Over</h1>
@@ -113,6 +132,9 @@
     const HIT_COOLDOWN_TIME = 1;  // seconds of invulnerability after hit
     const MIN_WALL_GAP = 250;    // minimum px between walls
 
+    const VOICE_RMS_THRESHOLD = 0.015;  // minimum volume to detect pitch
+    const VOICE_UPDATE_INTERVAL = 80;   // ms between voice updates (avoid jitter)
+
     // ── DOM ──
     const cvs = document.getElementById('game');
     const ctx = cvs.getContext('2d');
@@ -122,6 +144,102 @@
     const startScreen = document.getElementById('start-screen');
     const gameOverScreen = document.getElementById('game-over-screen');
     const finalScoreEl = document.getElementById('final-score');
+    const micStatusEl = document.getElementById('mic-status');
+    const detectedNoteEl = micStatusEl.querySelector('.detected-note');
+
+    // ── Pitch Detection (autocorrelation) ──
+    function autoCorrelate(buf, sampleRate) {
+      const size = buf.length;
+      let rms = 0;
+      for (let i = 0; i < size; i++) rms += buf[i] * buf[i];
+      rms = Math.sqrt(rms / size);
+      if (rms < VOICE_RMS_THRESHOLD) return -1;
+
+      // Autocorrelation
+      const c = new Float32Array(size);
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size - i; j++) {
+          c[i] += buf[j] * buf[j + i];
+        }
+      }
+
+      // Find first dip then peak
+      let d = 0;
+      while (d < size - 1 && c[d] > c[d + 1]) d++;
+
+      let maxval = -1, maxpos = -1;
+      for (let i = d; i < size; i++) {
+        if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+      }
+
+      let T0 = maxpos;
+      // Parabolic interpolation
+      if (T0 > 0 && T0 < size - 1) {
+        const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+        const a = (x1 + x3 - 2 * x2) / 2;
+        const b = (x3 - x1) / 2;
+        if (a) T0 = T0 - b / (2 * a);
+      }
+
+      return sampleRate / T0;
+    }
+
+    function freqToGameNote(freq) {
+      // Convert frequency to MIDI note number, then map to game notes (C D E F G A B)
+      const midi = Math.round(12 * Math.log2(freq / 440) + 69);
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const chromatic = noteNames[((midi % 12) + 12) % 12];
+      // Map sharps to nearest natural
+      const natural = chromatic.replace('#', '');
+      const idx = NOTES.indexOf(natural);
+      return idx !== -1 ? idx : -1;
+    }
+
+    // ── Mic state ──
+    let micActive = false;
+    let audioCtx, analyser, micBuf;
+    let lastVoiceUpdate = 0;
+
+    async function startMic() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        micBuf = new Float32Array(analyser.fftSize);
+        micActive = true;
+        micStatusEl.style.display = 'block';
+        micStatusEl.classList.add('listening');
+        return true;
+      } catch (err) {
+        console.warn('Mic access denied:', err);
+        return false;
+      }
+    }
+
+    function updateVoice() {
+      if (!micActive || !running) return;
+      const now = performance.now();
+      if (now - lastVoiceUpdate < VOICE_UPDATE_INTERVAL) return;
+      lastVoiceUpdate = now;
+
+      analyser.getFloatTimeDomainData(micBuf);
+      const freq = autoCorrelate(micBuf, audioCtx.sampleRate);
+
+      if (freq > 0) {
+        const noteIdx = freqToGameNote(freq);
+        if (noteIdx !== -1) {
+          setTargetNote(noteIdx);
+          detectedNoteEl.textContent = NOTES[noteIdx];
+          detectedNoteEl.style.color = NOTE_COLORS[NOTES[noteIdx]];
+        }
+      } else {
+        detectedNoteEl.textContent = '—';
+        detectedNoteEl.style.color = '#888';
+      }
+    }
 
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
@@ -161,6 +279,7 @@
       lastPassedWall = null;
       scoreEl.style.display = 'block';
       hitsEl.style.display = 'block';
+      if (micActive) micStatusEl.style.display = 'block';
       scoreEl.textContent = '0';
       updateHitsDisplay();
       // Spawn first wall quickly
@@ -439,6 +558,7 @@
     function gameOver() {
       scoreEl.style.display = 'none';
       hitsEl.style.display = 'none';
+      micStatusEl.style.display = 'none';
       finalScoreEl.textContent = score;
       overlay.classList.add('active');
       gameOverScreen.classList.add('visible');
@@ -447,6 +567,7 @@
     function gameLoop(now) {
       const dt = Math.min((now - lastTime) / 1000, 0.1); // cap at 100ms to avoid spiral
       lastTime = now;
+      updateVoice();
       update(dt);
       draw();
       requestAnimationFrame(gameLoop);
@@ -460,7 +581,12 @@
       initGame();
     }
 
-    document.getElementById('start-btn').addEventListener('click', (e) => {
+    document.getElementById('start-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await startMic();
+      startGame();
+    });
+    document.getElementById('start-silent-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       startGame();
     });
