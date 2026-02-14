@@ -261,9 +261,29 @@
             w.hitCooldown = 60;
             updateHitsDisplay();
 
-            // Snap all walls forward so bird is clearly before this wall
-            const overlap = bRight - w.x + birdSize;
-            for (const ww of walls) ww.x += overlap;
+            // Find the previous wall (the one just before this one)
+            const sortedByX = [...walls].sort((a, b) => a.x - b.x);
+            const thisIdx = sortedByX.indexOf(w);
+            const prevWall = thisIdx > 0 ? sortedByX[thisIdx - 1] : null;
+
+            if (prevWall) {
+              // Rewind so bird is centered in previous wall's gap
+              const targetX = prevWall.x + wallWidth / 2;
+              const shift = birdX - targetX;
+              for (const ww of walls) ww.x += shift;
+              // Snap bird to the previous wall's gap note
+              targetNoteIdx = prevWall.noteIdx;
+              bird.y = noteToY(targetNoteIdx);
+            } else {
+              // No previous wall — just push back before this wall
+              const overlap = bRight - w.x + birdSize * 2;
+              for (const ww of walls) ww.x += overlap;
+            }
+
+            // Unmark passed walls that are now ahead of bird again
+            for (const ww of walls) {
+              if (ww.x + wallWidth >= birdX) ww.passed = false;
+            }
 
             // Freeze walls to give player time to adjust
             wallFreeze = PUSHBACK_FRAMES;
