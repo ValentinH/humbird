@@ -85,7 +85,7 @@
       <h1>🐦🎵 HumBird</h1>
       <p class="subtitle">Sing the right note to fly through the gaps</p>
       <button class="btn" id="start-btn">▶ Play</button>
-      <p class="hint">Tap or click to move the bird up (voice control coming soon)</p>
+      <p class="hint">Keys A-G / arrows / tap top-bottom to move (voice coming soon)</p>
     </div>
     <div id="game-over-screen">
       <h1>💀 Game Over</h1>
@@ -102,15 +102,14 @@
       G: '#3498db', A: '#9b59b6', B: '#e056a0'
     };
     const MAX_HITS = 10;
-    const WALL_SPEED = 1.5;       // px per frame
-    const WALL_INTERVAL = 180;    // frames between walls
-    const GAP_HEIGHT_RATIO = 0.16; // gap = 16% of canvas height
+    const WALL_SPEED = 1.2;       // px per frame (chill pace)
+    const WALL_INTERVAL = 200;    // frames between walls
+    const GAP_HEIGHT_RATIO = 0.18; // gap = 18% of canvas height
     const BIRD_X_RATIO = 0.2;     // bird at 20% from left
-    const GRAVITY = 0.35;
-    const FLAP_FORCE = -6.5;
+    const BIRD_LERP = 0.08;       // smooth movement toward target note
     const BIRD_SIZE_RATIO = 0.045;
     const WALL_WIDTH_RATIO = 0.12;
-    const PUSHBACK_FRAMES = 40;   // frames to pause walls after hit
+    const PUSHBACK_FRAMES = 45;   // frames to pause walls after hit
 
     // ── DOM ──
     const cvs = document.getElementById('game');
@@ -124,7 +123,7 @@
 
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
-    let bird, walls, score, hits, frameCount, running, wallFreeze;
+    let bird, walls, score, hits, frameCount, running, wallFreeze, targetNoteIdx;
 
     function resize() {
       // mobile-first: use full viewport
@@ -146,7 +145,8 @@
     }
 
     function initGame() {
-      bird = { y: H / 2, vy: 0 };
+      targetNoteIdx = 3; // Start at F (middle)
+      bird = { y: noteToY(targetNoteIdx) };
       walls = [];
       score = 0;
       hits = 0;
@@ -182,16 +182,47 @@
       });
     }
 
-    function flap() {
+    function setTargetNote(idx) {
       if (!running) return;
-      bird.vy = FLAP_FORCE;
+      targetNoteIdx = Math.max(0, Math.min(NOTES.length - 1, idx));
     }
 
     // ── Input ──
-    cvs.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); }, { passive: false });
-    cvs.addEventListener('mousedown', () => flap());
+    // Keyboard: press note keys A-G or arrow up/down
     document.addEventListener('keydown', (e) => {
-      if (e.code === 'Space') { e.preventDefault(); flap(); }
+      if (!running) return;
+      const key = e.key.toUpperCase();
+      const noteIdx = NOTES.indexOf(key);
+      if (noteIdx !== -1) {
+        e.preventDefault();
+        setTargetNote(noteIdx);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setTargetNote(targetNoteIdx + 1);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setTargetNote(targetNoteIdx - 1);
+      }
+    });
+
+    // Touch/click: tap top half = go up, bottom half = go down
+    cvs.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (!running) return;
+      const touch = e.touches[0];
+      if (touch.clientY < H / 2) {
+        setTargetNote(targetNoteIdx + 1);
+      } else {
+        setTargetNote(targetNoteIdx - 1);
+      }
+    }, { passive: false });
+    cvs.addEventListener('mousedown', (e) => {
+      if (!running) return;
+      if (e.clientY < H / 2) {
+        setTargetNote(targetNoteIdx + 1);
+      } else {
+        setTargetNote(targetNoteIdx - 1);
+      }
     });
 
     // ── Game Loop ──
@@ -199,13 +230,9 @@
       if (!running) return;
       frameCount++;
 
-      // Bird physics
-      bird.vy += GRAVITY;
-      bird.y += bird.vy;
-
-      // Clamp
-      if (bird.y < birdSize) { bird.y = birdSize; bird.vy = 0; }
-      if (bird.y > H - birdSize) { bird.y = H - birdSize; bird.vy = 0; }
+      // Bird smoothly moves toward target note
+      const targetY = noteToY(targetNoteIdx);
+      bird.y += (targetY - bird.y) * BIRD_LERP;
 
       // Spawn walls
       if (frameCount % WALL_INTERVAL === 0) spawnWall();
@@ -387,7 +414,8 @@
     });
 
     // Init bird for title screen draw
-    bird = { y: H / 2, vy: 0 };
+    targetNoteIdx = 3;
+    bird = { y: H / 2 };
     walls = [];
     running = false;
 
