@@ -125,7 +125,7 @@
     // ── State ──
     let W, H, birdX, birdSize, wallWidth;
     let bird, walls, score, hits, running, wallFreeze, targetNoteIdx;
-    let lastTime, timeSinceWall;
+    let lastTime, timeSinceWall, lastPassedNoteIdx;
 
     function resize() {
       // mobile-first: use full viewport
@@ -156,6 +156,7 @@
       wallFreeze = 0;
       lastTime = performance.now();
       timeSinceWall = 0;
+      lastPassedNoteIdx = targetNoteIdx; // start position
       scoreEl.style.display = 'block';
       hitsEl.style.display = 'block';
       scoreEl.textContent = '0';
@@ -287,15 +288,13 @@
               // Rewind so bird sits just after the previous wall
               const shift = birdX - (prevWall.x + wallWidth + birdSize * 2);
               for (const ww of walls) ww.x += shift;
-              // Set target to previous wall's note — bird will lerp there
-              targetNoteIdx = prevWall.noteIdx;
             } else {
               // No previous wall — push back well before current wall
               const pushDist = bRight - w.x + MIN_WALL_GAP;
               for (const ww of walls) ww.x += pushDist;
-              // Set target to this wall's note so player sees where to go
-              targetNoteIdx = w.noteIdx;
             }
+            // Move bird back to the last hole it successfully passed
+            targetNoteIdx = lastPassedNoteIdx;
 
             // Enforce minimum spacing between walls after rewind
             const sorted = walls.sort((a, b) => a.x - b.x);
@@ -328,6 +327,7 @@
           w.passed = true;
           score++;
           scoreEl.textContent = score;
+          lastPassedNoteIdx = w.noteIdx;
         }
       }
 
