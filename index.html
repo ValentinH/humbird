@@ -111,6 +111,7 @@
     const WALL_WIDTH_RATIO = 0.12;
     const PUSHBACK_TIME = 1.2;    // seconds to pause walls after hit (time to see the rewind)
     const HIT_COOLDOWN_TIME = 1;  // seconds of invulnerability after hit
+    const MIN_WALL_GAP = 250;    // minimum px between walls
 
     // ── DOM ──
     const cvs = document.getElementById('game');
@@ -170,8 +171,6 @@
       const hearts = MAX_HITS - hits;
       hitsEl.textContent = '❤️'.repeat(Math.max(0, hearts));
     }
-
-    const MIN_WALL_GAP = 250; // minimum px between walls
 
     function spawnWall() {
       // Ensure minimum distance from last wall
@@ -245,17 +244,16 @@
       const lerpFactor = 1 - Math.exp(-BIRD_LERP * dt);
       bird.y += (targetY - bird.y) * lerpFactor;
 
-      // Spawn walls
-      timeSinceWall += dt;
-      if (timeSinceWall >= WALL_INTERVAL) {
-        timeSinceWall = 0;
-        spawnWall();
-      }
-
       // Wall freeze countdown
       if (wallFreeze > 0) {
         wallFreeze -= dt;
       } else {
+        // Spawn walls (only when not frozen)
+        timeSinceWall += dt;
+        if (timeSinceWall >= WALL_INTERVAL) {
+          timeSinceWall = 0;
+          spawnWall();
+        }
         // Move walls
         const moveAmt = WALL_SPEED * dt;
         for (const w of walls) w.x -= moveAmt;
@@ -286,7 +284,7 @@
             if (lastPassedWall) {
               // Re-create the last passed wall at a visible position on screen
               const ghostWall = {
-                x: W * 0.12,
+                x: birdX - wallWidth - birdSize,
                 gapTop: lastPassedWall.gapTop,
                 gapBottom: lastPassedWall.gapBottom,
                 note: lastPassedWall.note,
@@ -306,11 +304,11 @@
             }
 
             // Enforce minimum spacing between walls after rewind
-            const sorted = walls.sort((a, b) => a.x - b.x);
-            for (let i = 1; i < sorted.length; i++) {
-              const gap = sorted[i].x - (sorted[i - 1].x + wallWidth);
+            walls.sort((a, b) => a.x - b.x);
+            for (let i = 1; i < walls.length; i++) {
+              const gap = walls[i].x - (walls[i - 1].x + wallWidth);
               if (gap < MIN_WALL_GAP) {
-                sorted[i].x = sorted[i - 1].x + wallWidth + MIN_WALL_GAP;
+                walls[i].x = walls[i - 1].x + wallWidth + MIN_WALL_GAP;
               }
             }
 
